@@ -4,6 +4,9 @@ import type { GroupMember } from "./conversation";
 export interface ServerToClientEvents {
   "message:new": (message: Message) => void;
   "message:status": (data: { messageId: string; status: "delivered" | "read" }) => void;
+  "message:edited": (data: { messageId: string; content: string; conversationId: string }) => void;
+  "message:deleted": (data: { messageId: string; conversationId: string; forEveryone: boolean }) => void;
+  "message:pinned": (data: { conversationId: string; pinnedMessage: Message | null }) => void;
   "user:online": (userId: string) => void;
   "user:offline": (userId: string, lastSeen: string) => void;
   "typing:start": (data: { conversationId: string; userId: string }) => void;

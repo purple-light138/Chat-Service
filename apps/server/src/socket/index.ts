@@ -11,7 +11,6 @@ export function setupSocket(io: Server) {
     const token = socket.handshake.auth.token as string | undefined;
     if (!token) return next(new Error("Unauthorized"));
 
-    // Direct DB lookup — avoids auth.api.getSession requiring a full Request object
     const [row] = await db
       .select({ userId: sessions.userId })
       .from(sessions)
@@ -63,19 +62,23 @@ export function setupSocket(io: Server) {
           fileUrl: payload.fileUrl ?? null,
           fileName: payload.fileName ?? null,
           fileSize: payload.fileSize ? String(payload.fileSize) : null,
+          replyToId: payload.replyToId ?? null,
           createdAt: now,
           updatedAt: now,
         })
         .returning();
 
-      const outgoing = serializeMessage(message);
+      // Fetch replyTo preview if present
+      let replyTo = null;
+      if (message.replyToId) {
+        replyTo = await fetchReplyPreview(message.replyToId);
+      }
 
-      // Deliver to everyone in the conversation room except the sender
+      const outgoing = { ...serializeMessage(message), replyTo };
+
       socket.to(`conversation:${payload.conversationId}`).emit("message:new", outgoing);
       ack(outgoing);
 
-      // Check if any recipient is already online and in this conversation room
-      // If so, mark as delivered immediately
       const room = io.sockets.adapter.rooms.get(`conversation:${payload.conversationId}`);
       if (room && room.size > 1) {
         await db
@@ -147,6 +150,14 @@ export function setupSocket(io: Server) {
       io.emit("user:offline", userId, lastSeen.toISOString());
     });
   });
+}
+
+async function fetchReplyPreview(messageId: string) {
+  const [msg] = await db.select({ id: messages.id, senderId: messages.senderId, content: messages.content, type: messages.type })
+    .from(messages).where(eq(messages.id, messageId)).limit(1);
+  if (!msg) return null;
+  const [user] = await db.select({ name: users.name }).from(users).where(eq(users.id, msg.senderId)).limit(1);
+  return { id: msg.id, senderId: msg.senderId, senderName: user?.name ?? "Unknown", content: msg.content, type: msg.type };
 }
 
 function serializeMessage(msg: any) {

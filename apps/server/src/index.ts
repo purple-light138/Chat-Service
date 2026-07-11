@@ -12,6 +12,7 @@ import { auth } from "./lib/auth.js";
 import { userRoutes } from "./routes/users.js";
 import { conversationRoutes } from "./routes/conversations.js";
 import { groupRoutes } from "./routes/groups.js";
+import { messageRoutes } from "./routes/messages.js";
 import { uploadRoutes } from "./routes/upload.js";
 import { setupSocket } from "./socket/index.js";
 import { runMigrations } from "./db/migrate.js";
@@ -59,6 +60,7 @@ await app.register(multipart, { limits: { fileSize: 50 * 1024 * 1024 } });
 await app.register(userRoutes, { prefix: "/api" });
 await app.register(conversationRoutes, { prefix: "/api" });
 await app.register(groupRoutes, { prefix: "/api", io });
+await app.register(messageRoutes, { prefix: "/api", io });
 await app.register(uploadRoutes, { prefix: "/api" });
 
 if (isProduction) {

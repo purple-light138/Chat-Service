@@ -15,6 +15,13 @@
       "when": 1783802231664,
       "tag": "0001_next_sabretooth",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1783803195749,
+      "tag": "0002_chunky_proemial_gods",
+      "breakpoints": true
     }
   ]
 }

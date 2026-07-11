@@ -96,6 +96,31 @@ export const messages = pgTable("messages", {
   fileUrl: text("file_url"),
   fileName: text("file_name"),
   fileSize: text("file_size"),
+  replyToId: text("reply_to_id"),
+  edited: boolean("edited").notNull().default(false),
+  isDeleted: boolean("is_deleted").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const messageDeletions = pgTable("message_deletions", {
+  id: text("id").primaryKey(),
+  messageId: text("message_id").notNull().references(() => messages.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const pinnedMessages = pgTable("pinned_messages", {
+  id: text("id").primaryKey(),
+  conversationId: text("conversation_id").notNull().references(() => conversations.id, { onDelete: "cascade" }),
+  messageId: text("message_id").notNull().unique().references(() => messages.id, { onDelete: "cascade" }),
+  pinnedBy: text("pinned_by").notNull().references(() => users.id),
+  pinnedAt: timestamp("pinned_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const starredMessages = pgTable("starred_messages", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  messageId: text("message_id").notNull().references(() => messages.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });

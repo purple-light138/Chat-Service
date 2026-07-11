@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
-import { eq, or, and, desc } from "drizzle-orm";
+import { eq, or, and, desc, notInArray, inArray } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { conversations, groups, groupMembers, messages, users } from "../db/schema.js";
+import { conversations, groups, groupMembers, messages, messageDeletions, pinnedMessages, starredMessages, users } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
 
 export async function conversationRoutes(app: FastifyInstance) {
@@ -118,14 +118,51 @@ export async function conversationRoutes(app: FastifyInstance) {
       if (!membership) return reply.status(403).send({ error: "Access denied" });
     }
 
-    const rows = await db
-      .select()
-      .from(messages)
-      .where(eq(messages.conversationId, id))
-      .orderBy(desc(messages.createdAt))
-      .limit(Math.min(parseInt(limit), 100));
+    // IDs deleted for this user
+    const deletedForMe = await db.select({ messageId: messageDeletions.messageId })
+      .from(messageDeletions).where(eq(messageDeletions.userId, req.userId));
+    const deletedIds = deletedForMe.map((d) => d.messageId);
 
-    return reply.send(rows.reverse().map(serializeMessage));
+    const baseWhere = deletedIds.length > 0
+      ? and(eq(messages.conversationId, id), notInArray(messages.id, deletedIds))
+      : eq(messages.conversationId, id);
+
+    const rows = await db.select().from(messages).where(baseWhere).orderBy(desc(messages.createdAt)).limit(Math.min(parseInt(limit), 100));
+
+    // Fetch starred + pinned for this user/conversation
+    const msgIds = rows.map((m) => m.id);
+    const [starredRows, pinnedRow] = await Promise.all([
+      msgIds.length > 0 ? db.select({ messageId: starredMessages.messageId }).from(starredMessages).where(and(eq(starredMessages.userId, req.userId), inArray(starredMessages.messageId, msgIds))) : Promise.resolve([]),
+      db.select().from(pinnedMessages).where(eq(pinnedMessages.conversationId, id)).limit(1),
+    ]);
+    const starredSet = new Set(starredRows.map((s) => s.messageId));
+    const pinnedId = pinnedRow[0]?.messageId ?? null;
+
+    // Fetch replyTo previews for messages that have replyToId
+    const replyIds = [...new Set(rows.filter((m) => m.replyToId).map((m) => m.replyToId!))];
+    const replyMap: Record<string, any> = {};
+    if (replyIds.length > 0) {
+      const replyMsgs = await db.select({ id: messages.id, senderId: messages.senderId, content: messages.content, type: messages.type })
+        .from(messages).where(inArray(messages.id, replyIds));
+      const senderIds = [...new Set(replyMsgs.map((m) => m.senderId))];
+      const senderRows = senderIds.length > 0
+        ? await db.select({ id: users.id, name: users.name }).from(users).where(inArray(users.id, senderIds))
+        : [];
+      const senderNameMap: Record<string, string> = {};
+      for (const s of senderRows) senderNameMap[s.id] = s.name;
+      for (const m of replyMsgs) {
+        replyMap[m.id] = { id: m.id, senderId: m.senderId, senderName: senderNameMap[m.senderId] ?? "Unknown", content: m.content, type: m.type };
+      }
+    }
+
+    return reply.send(
+      rows.reverse().map((m) => ({
+        ...serializeMessage(m),
+        isStarred: starredSet.has(m.id),
+        isPinned: m.id === pinnedId,
+        replyTo: m.replyToId ? (replyMap[m.replyToId] ?? null) : null,
+      }))
+    );
   });
 }
 

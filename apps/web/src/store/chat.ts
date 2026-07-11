@@ -5,12 +5,17 @@ interface ChatStore {
   conversations: Conversation[];
   activeConversationId: string | null;
   messages: Record<string, Message[]>;
+  pinnedMessage: Record<string, Message | null>;
   setConversations: (convs: Conversation[]) => void;
   addConversation: (conv: Conversation) => void;
   setActiveConversation: (id: string | null) => void;
   setMessages: (conversationId: string, msgs: Message[]) => void;
   appendMessage: (msg: Message) => void;
   updateMessageStatus: (messageId: string, status: MessageStatus) => void;
+  editMessage: (messageId: string, content: string) => void;
+  deleteMessage: (messageId: string, forEveryone: boolean) => void;
+  toggleStar: (messageId: string, conversationId: string) => void;
+  setPinnedMessage: (conversationId: string, msg: Message | null) => void;
   removeConversation: (id: string) => void;
   updateGroupName: (conversationId: string, name: string) => void;
   addGroupMember: (conversationId: string, member: GroupMember) => void;
@@ -21,6 +26,7 @@ export const useChatStore = create<ChatStore>((set) => ({
   conversations: [],
   activeConversationId: null,
   messages: {},
+  pinnedMessage: {},
   setConversations: (conversations) => set({ conversations }),
   addConversation: (conv) =>
     set((s) => ({ conversations: [conv, ...s.conversations] })),
@@ -45,6 +51,46 @@ export const useChatStore = create<ChatStore>((set) => ({
       }
       return { messages: updated };
     }),
+  editMessage: (messageId, content) =>
+    set((s) => {
+      const updated: Record<string, Message[]> = {};
+      for (const [convId, msgs] of Object.entries(s.messages)) {
+        updated[convId] = msgs.map((m) => m.id === messageId ? { ...m, content, edited: true } : m);
+      }
+      return { messages: updated };
+    }),
+  deleteMessage: (messageId, forEveryone) =>
+    set((s) => {
+      const updated: Record<string, Message[]> = {};
+      for (const [convId, msgs] of Object.entries(s.messages)) {
+        if (forEveryone) {
+          updated[convId] = msgs.map((m) => m.id === messageId ? { ...m, isDeleted: true, content: "" } : m);
+        } else {
+          updated[convId] = msgs.filter((m) => m.id !== messageId);
+        }
+      }
+      return { messages: updated };
+    }),
+  toggleStar: (messageId, conversationId) =>
+    set((s) => ({
+      messages: {
+        ...s.messages,
+        [conversationId]: (s.messages[conversationId] ?? []).map((m) =>
+          m.id === messageId ? { ...m, isStarred: !m.isStarred } : m
+        ),
+      },
+    })),
+  setPinnedMessage: (conversationId, msg) =>
+    set((s) => ({
+      pinnedMessage: { ...s.pinnedMessage, [conversationId]: msg },
+      messages: {
+        ...s.messages,
+        [conversationId]: (s.messages[conversationId] ?? []).map((m) => ({
+          ...m,
+          isPinned: msg ? m.id === msg.id : false,
+        })),
+      },
+    })),
   removeConversation: (id) =>
     set((s) => ({
       conversations: s.conversations.filter((c) => c.id !== id),
@@ -62,14 +108,7 @@ export const useChatStore = create<ChatStore>((set) => ({
     set((s) => ({
       conversations: s.conversations.map((c) =>
         c.id === conversationId && c.type === "group" && c.group
-          ? {
-              ...c,
-              group: {
-                ...c.group,
-                memberCount: c.group.memberCount + 1,
-                members: [...(c.group.members ?? []), member],
-              },
-            }
+          ? { ...c, group: { ...c.group, memberCount: c.group.memberCount + 1, members: [...(c.group.members ?? []), member] } }
           : c
       ),
     })),
@@ -77,14 +116,7 @@ export const useChatStore = create<ChatStore>((set) => ({
     set((s) => ({
       conversations: s.conversations.map((c) =>
         c.id === conversationId && c.type === "group" && c.group
-          ? {
-              ...c,
-              group: {
-                ...c.group,
-                memberCount: Math.max(0, c.group.memberCount - 1),
-                members: (c.group.members ?? []).filter((m) => m.userId !== userId),
-              },
-            }
+          ? { ...c, group: { ...c.group, memberCount: Math.max(0, c.group.memberCount - 1), members: (c.group.members ?? []).filter((m) => m.userId !== userId) } }
           : c
       ),
     })),
