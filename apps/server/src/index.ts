@@ -15,6 +15,7 @@ import { conversationRoutes } from "./routes/conversations.js";
 import { groupRoutes } from "./routes/groups.js";
 import { messageRoutes } from "./routes/messages.js";
 import { uploadRoutes } from "./routes/upload.js";
+import { iceRoutes } from "./routes/ice.js";
 import { setupSocket } from "./socket/index.js";
 import { runMigrations } from "./db/migrate.js";
 
@@ -63,6 +64,7 @@ await app.register(conversationRoutes, { prefix: "/api" });
 await app.register(groupRoutes, { prefix: "/api", io });
 await app.register(messageRoutes, { prefix: "/api", io });
 await app.register(uploadRoutes, { prefix: "/api" });
+await app.register(iceRoutes, { prefix: "/api" });
 
 // Serve local uploads directory (used when R2 is not configured)
 const __dirname = path.dirname(fileURLToPath(import.meta.url));

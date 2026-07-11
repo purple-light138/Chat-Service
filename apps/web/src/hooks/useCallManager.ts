@@ -3,15 +3,15 @@ import { socket } from "@/lib/socket";
 import { useSession } from "@/lib/auth-client";
 import { useCallStore } from "@/store/call";
 
-const ICE_SERVERS = [
-  { urls: "stun:stun.l.google.com:19302" },
-  { urls: "stun:stun1.l.google.com:19302" },
-  { urls: "turn:openrelay.metered.ca:80", username: "openrelayproject", credential: "openrelayproject" },
-  { urls: "turn:openrelay.metered.ca:443", username: "openrelayproject", credential: "openrelayproject" },
-  { urls: "turn:openrelay.metered.ca:443?transport=tcp", username: "openrelayproject", credential: "openrelayproject" },
-];
-
 const log = (...args: any[]) => console.log("[WebRTC]", ...args);
+
+async function fetchIceServers(): Promise<RTCIceServer[]> {
+  try {
+    const res = await fetch("/api/ice-servers", { credentials: "include" });
+    if (res.ok) return res.json();
+  } catch {}
+  return [{ urls: "stun:stun.l.google.com:19302" }];
+}
 
 export function useCallManager() {
   const { data: session } = useSession();
@@ -20,8 +20,9 @@ export function useCallManager() {
   const localStreamRef = useRef<MediaStream | null>(null);
   const iceBuf = useRef(new Map<string, RTCIceCandidateInit[]>());
   const callIdRef = useRef<string | null>(null);
-  // Audio elements managed imperatively — bypasses React rendering for reliable playback
   const audioEls = useRef(new Map<string, HTMLAudioElement>());
+  const wasOfferer = useRef(new Map<string, boolean>());
+  const iceServersRef = useRef<RTCIceServer[]>([{ urls: "stun:stun.l.google.com:19302" }]);
 
   useEffect(() => { callIdRef.current = store.callId; }, [store.callId]);
 
@@ -50,10 +51,34 @@ export function useCallManager() {
     return el;
   }
 
+  function cleanupPeer(remoteUserId: string) {
+    store.removeParticipant(remoteUserId);
+    peerConns.current.delete(remoteUserId);
+    wasOfferer.current.delete(remoteUserId);
+    const el = audioEls.current.get(remoteUserId);
+    if (el) { el.srcObject = null; el.remove(); audioEls.current.delete(remoteUserId); }
+  }
+
+  async function doIceRestart(remoteUserId: string, pc: RTCPeerConnection) {
+    const callId = callIdRef.current;
+    if (!callId) return;
+    try {
+      log("attempting ICE restart for", remoteUserId);
+      const offer = await pc.createOffer({ iceRestart: true });
+      await pc.setLocalDescription(offer);
+      (socket as any).emit("call:offer", { callId, to: remoteUserId, sdp: { type: offer.type, sdp: offer.sdp } });
+      log("ICE restart offer sent");
+    } catch (e) {
+      log("ICE restart failed", e);
+      cleanupPeer(remoteUserId);
+    }
+  }
+
   function createPC(remoteUserId: string): RTCPeerConnection {
     log("createPC for", remoteUserId, "local tracks:", localStreamRef.current?.getTracks().map(t => t.kind));
-    const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+    const pc = new RTCPeerConnection({ iceServers: iceServersRef.current });
     const remoteVideoStream = new MediaStream();
+    let restartTimer: ReturnType<typeof setTimeout> | null = null;
 
     for (const track of (localStreamRef.current?.getTracks() ?? [])) {
       pc.addTrack(track, localStreamRef.current!);
@@ -61,31 +86,22 @@ export function useCallManager() {
     }
 
     pc.ontrack = (e) => {
-      log("ontrack fired:", e.track.kind, "streams:", e.streams.length);
-      const track = e.track;
-
-      if (track.kind === "audio") {
-        // Imperatively attach audio to a DOM element — never relies on React re-render
+      log("ontrack:", e.track.kind);
+      if (e.track.kind === "audio") {
         const el = ensureAudioEl(remoteUserId);
         if (!el.srcObject) el.srcObject = new MediaStream();
-        (el.srcObject as MediaStream).addTrack(track);
-        log("audio track attached to DOM element");
+        (el.srcObject as MediaStream).addTrack(e.track);
+        log("audio track → DOM element");
       } else {
-        remoteVideoStream.addTrack(track);
-        // Create a new stream reference so React's useEffect re-runs in VideoTile
+        remoteVideoStream.addTrack(e.track);
         store.updateParticipantStream(remoteUserId, new MediaStream(remoteVideoStream.getTracks()));
-        log("video track passed to store");
+        log("video track → store");
       }
     };
 
     pc.onicecandidate = (e) => {
       if (e.candidate && callIdRef.current) {
-        log("sending ICE candidate to", remoteUserId);
-        (socket as any).emit("call:ice", {
-          callId: callIdRef.current,
-          to: remoteUserId,
-          candidate: e.candidate.toJSON(),
-        });
+        (socket as any).emit("call:ice", { callId: callIdRef.current, to: remoteUserId, candidate: e.candidate.toJSON() });
       }
     };
 
@@ -95,13 +111,30 @@ export function useCallManager() {
 
     pc.onconnectionstatechange = () => {
       log("connection state →", pc.connectionState, "for", remoteUserId);
+
       if (pc.connectionState === "connected") {
         store.setConnected();
-      } else if (["disconnected", "failed", "closed"].includes(pc.connectionState)) {
-        store.removeParticipant(remoteUserId);
-        peerConns.current.delete(remoteUserId);
-        const el = audioEls.current.get(remoteUserId);
-        if (el) { el.srcObject = null; el.remove(); audioEls.current.delete(remoteUserId); }
+        if (restartTimer) { clearTimeout(restartTimer); restartTimer = null; }
+      } else if (pc.connectionState === "disconnected") {
+        // Give it 4 s to recover on its own before forcing a restart
+        restartTimer = setTimeout(() => {
+          if (pc.connectionState === "disconnected" || pc.connectionState === "failed") {
+            if (wasOfferer.current.get(remoteUserId)) {
+              doIceRestart(remoteUserId, pc);
+            } else {
+              cleanupPeer(remoteUserId);
+            }
+          }
+        }, 4000);
+      } else if (pc.connectionState === "failed") {
+        if (restartTimer) { clearTimeout(restartTimer); restartTimer = null; }
+        if (wasOfferer.current.get(remoteUserId)) {
+          doIceRestart(remoteUserId, pc);
+        } else {
+          cleanupPeer(remoteUserId);
+        }
+      } else if (pc.connectionState === "closed") {
+        cleanupPeer(remoteUserId);
       }
     };
 
@@ -111,25 +144,28 @@ export function useCallManager() {
 
   async function drainIceBuf(userId: string, pc: RTCPeerConnection) {
     const buf = iceBuf.current.get(userId) ?? [];
-    if (buf.length) log("draining", buf.length, "buffered ICE candidates for", userId);
-    for (const c of buf) await pc.addIceCandidate(c).catch((e) => log("addIceCandidate error", e));
+    if (buf.length) log("draining", buf.length, "ICE candidates for", userId);
+    for (const c of buf) await pc.addIceCandidate(c).catch(e => log("addIceCandidate err", e));
     iceBuf.current.delete(userId);
   }
 
   function cleanup() {
     log("cleanup");
-    localStreamRef.current?.getTracks().forEach((t) => t.stop());
+    localStreamRef.current?.getTracks().forEach(t => t.stop());
     localStreamRef.current = null;
-    peerConns.current.forEach((pc) => pc.close());
+    peerConns.current.forEach(pc => pc.close());
     peerConns.current.clear();
     iceBuf.current.clear();
-    audioEls.current.forEach((el) => { el.srcObject = null; el.remove(); });
+    wasOfferer.current.clear();
+    audioEls.current.forEach(el => { el.srcObject = null; el.remove(); });
     audioEls.current.clear();
     store.reset();
   }
 
   const startCall = useCallback(async (conversationId: string, type: "audio" | "video") => {
     log("startCall", type, conversationId);
+    iceServersRef.current = await fetchIceServers();
+    log("ICE servers:", iceServersRef.current.length);
     try {
       await getMedia(type);
     } catch (err) {
@@ -139,7 +175,7 @@ export function useCallManager() {
     }
     (socket as any).emit("call:invite", { conversationId, type }, (res: { callId: string }) => {
       log("call:invite ack, callId:", res.callId);
-      callIdRef.current = res.callId; // Set immediately, don't wait for useEffect
+      callIdRef.current = res.callId;
       store.setOutgoing(res.callId, conversationId, type);
     });
   }, []);
@@ -148,6 +184,8 @@ export function useCallManager() {
     const { callId, type } = store;
     log("acceptCall, callId:", callId, type);
     if (!callId) return;
+    iceServersRef.current = await fetchIceServers();
+    log("ICE servers:", iceServersRef.current.length);
     try {
       await getMedia(type);
     } catch (err) {
@@ -156,7 +194,7 @@ export function useCallManager() {
       rejectCall();
       return;
     }
-    callIdRef.current = callId; // Set immediately
+    callIdRef.current = callId;
     (socket as any).emit("call:join", { callId }, async (res: { participants: { userId: string; userName: string }[] }) => {
       log("call:join ack, participants:", res.participants.map(p => p.userId));
       store.setConnected();
@@ -164,6 +202,7 @@ export function useCallManager() {
         if (p.userId === session?.user.id) continue;
         store.addParticipant({ userId: p.userId, userName: p.userName, stream: null });
         const pc = createPC(p.userId);
+        wasOfferer.current.set(p.userId, true);
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
         log("sending offer to", p.userId);
@@ -202,11 +241,11 @@ export function useCallManager() {
       if (!camStream) return;
       const camTrack = camStream.getVideoTracks()[0];
       for (const pc of peerConns.current.values()) {
-        const sender = pc.getSenders().find((s) => s.track?.kind === "video");
+        const sender = pc.getSenders().find(s => s.track?.kind === "video");
         if (sender) await sender.replaceTrack(camTrack).catch(() => {});
       }
       if (localStreamRef.current) {
-        localStreamRef.current.getVideoTracks().forEach((t) => { t.stop(); localStreamRef.current!.removeTrack(t); });
+        localStreamRef.current.getVideoTracks().forEach(t => { t.stop(); localStreamRef.current!.removeTrack(t); });
         localStreamRef.current.addTrack(camTrack);
         store.setLocalStream(new MediaStream([...localStreamRef.current.getTracks()]));
       }
@@ -217,11 +256,11 @@ export function useCallManager() {
       const screenTrack = screenStream.getVideoTracks()[0];
       screenTrack.onended = () => { if (useCallStore.getState().isScreenSharing) toggleScreenShare(); };
       for (const pc of peerConns.current.values()) {
-        const sender = pc.getSenders().find((s) => s.track?.kind === "video");
+        const sender = pc.getSenders().find(s => s.track?.kind === "video");
         if (sender) await sender.replaceTrack(screenTrack).catch(() => {});
       }
       if (localStreamRef.current) {
-        localStreamRef.current.getVideoTracks().forEach((t) => { t.stop(); localStreamRef.current!.removeTrack(t); });
+        localStreamRef.current.getVideoTracks().forEach(t => { t.stop(); localStreamRef.current!.removeTrack(t); });
         localStreamRef.current.addTrack(screenTrack);
         store.setLocalStream(new MediaStream([...localStreamRef.current.getTracks()]));
       }
@@ -234,7 +273,7 @@ export function useCallManager() {
     if (!session) return;
 
     const onInvite = (data: { callId: string; conversationId: string; callerId: string; callerName: string; type: "audio" | "video" }) => {
-      log("call:invite received from", data.callerName, data.type);
+      log("call:invite from", data.callerName, data.type);
       if (useCallStore.getState().status !== "idle") return;
       store.setIncoming(data.callId, data.conversationId, data.callerId, data.callerName, data.type);
     };
@@ -247,10 +286,13 @@ export function useCallManager() {
     };
 
     const onOffer = async (data: { callId: string; from: string; sdp: { type: string; sdp: string } }) => {
-      log("call:offer from", data.from, "callIdRef:", callIdRef.current, "dataCallId:", data.callId);
+      log("call:offer from", data.from, "callIdRef:", callIdRef.current);
       if (callIdRef.current !== data.callId) { log("callId mismatch, ignoring offer"); return; }
       let pc = peerConns.current.get(data.from);
-      if (!pc) pc = createPC(data.from);
+      if (!pc) {
+        pc = createPC(data.from);
+        wasOfferer.current.set(data.from, false);
+      }
       await pc.setRemoteDescription({ type: data.sdp.type as RTCSdpType, sdp: data.sdp.sdp });
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
@@ -263,7 +305,7 @@ export function useCallManager() {
     const onAnswer = async (data: { callId: string; from: string; sdp: { type: string; sdp: string } }) => {
       log("call:answer from", data.from);
       const pc = peerConns.current.get(data.from);
-      if (!pc) { log("no PC found for", data.from); return; }
+      if (!pc) { log("no PC for", data.from); return; }
       await pc.setRemoteDescription({ type: data.sdp.type as RTCSdpType, sdp: data.sdp.sdp });
       await drainIceBuf(data.from, pc);
     };
@@ -271,7 +313,7 @@ export function useCallManager() {
     const onIce = async (data: { callId: string; from: string; candidate: RTCIceCandidateInit }) => {
       const pc = peerConns.current.get(data.from);
       if (pc?.remoteDescription) {
-        await pc.addIceCandidate(data.candidate).catch((e) => log("addIceCandidate error", e));
+        await pc.addIceCandidate(data.candidate).catch(e => log("addIceCandidate err", e));
       } else {
         const buf = iceBuf.current.get(data.from) ?? [];
         buf.push(data.candidate);
@@ -283,10 +325,8 @@ export function useCallManager() {
       log("call:leave", data.userId);
       if (callIdRef.current !== data.callId) return;
       const pc = peerConns.current.get(data.userId);
-      if (pc) { pc.close(); peerConns.current.delete(data.userId); }
-      store.removeParticipant(data.userId);
-      const el = audioEls.current.get(data.userId);
-      if (el) { el.srcObject = null; el.remove(); audioEls.current.delete(data.userId); }
+      if (pc) pc.close();
+      cleanupPeer(data.userId);
     };
 
     const onEnded = () => { log("call:ended"); cleanup(); };
