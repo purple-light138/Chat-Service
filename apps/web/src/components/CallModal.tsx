@@ -12,15 +12,6 @@ interface Props {
   onToggleScreenShare: () => Promise<void>;
 }
 
-// Plays audio from a remote stream (used for audio-only calls and as fallback)
-function AudioPlayer({ stream }: { stream: MediaStream | null }) {
-  const ref = useRef<HTMLAudioElement>(null);
-  useEffect(() => {
-    if (ref.current) ref.current.srcObject = stream;
-  }, [stream]);
-  return <audio ref={ref} autoPlay playsInline />;
-}
-
 function VideoTile({ stream, name, muted, small }: { stream: MediaStream | null; name: string; muted?: boolean; small?: boolean }) {
   const ref = useRef<HTMLVideoElement>(null);
   useEffect(() => {
@@ -61,18 +52,15 @@ function ControlBtn({ onClick, active, danger, icon: Icon, title }: { onClick: (
   );
 }
 
+// Audio is played via imperative DOM elements in useCallManager — no React component needed
 function AudioAvatar({ participant }: { participant: RemoteParticipant }) {
   return (
-    <>
-      {/* Hidden audio element so the remote voice actually plays */}
-      <AudioPlayer stream={participant.stream} />
-      <div className="flex flex-col items-center gap-2">
-        <div className="w-20 h-20 rounded-full bg-gray-600 flex items-center justify-center text-3xl font-bold text-white">
-          {participant.userName[0]?.toUpperCase()}
-        </div>
-        <span className="text-white text-sm">{participant.userName}</span>
+    <div className="flex flex-col items-center gap-2">
+      <div className="w-20 h-20 rounded-full bg-gray-600 flex items-center justify-center text-3xl font-bold text-white">
+        {participant.userName[0]?.toUpperCase()}
       </div>
-    </>
+      <span className="text-white text-sm">{participant.userName}</span>
+    </div>
   );
 }
 
