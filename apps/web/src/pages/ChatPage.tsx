@@ -5,12 +5,16 @@ import { socket } from "@/lib/socket";
 import ConversationList from "@/components/ConversationList";
 import ChatWindow from "@/components/ChatWindow";
 import CreateGroupModal from "@/components/CreateGroupModal";
+import CallModal from "@/components/CallModal";
+import IncomingCallBanner from "@/components/IncomingCallBanner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { LogOut, Search, X, Users } from "lucide-react";
 import type { PublicUser } from "@chat/shared";
 import { useChatStore } from "@/store/chat";
 import { usePresenceStore } from "@/store/presence";
+import { useCallManager } from "@/hooks/useCallManager";
+import { CallContext } from "@/context/call";
 
 export default function ChatPage() {
   const { data: session, isPending } = useSession();
@@ -21,6 +25,7 @@ export default function ChatPage() {
   const [searchResults, setSearchResults] = useState<PublicUser[]>([]);
   const [searching, setSearching] = useState(false);
   const [showCreateGroup, setShowCreateGroup] = useState(false);
+  const callActions = useCallManager();
 
   useEffect(() => {
     if (!isPending && !session) navigate("/login");
@@ -87,6 +92,14 @@ export default function ChatPage() {
   }
 
   return (
+    <CallContext.Provider value={callActions}>
+    <IncomingCallBanner onAccept={callActions.acceptCall} onReject={callActions.rejectCall} />
+    <CallModal
+      onEnd={callActions.endCall}
+      onToggleMute={callActions.toggleMute}
+      onToggleCamera={callActions.toggleCamera}
+      onToggleScreenShare={callActions.toggleScreenShare}
+    />
     <div className="h-screen flex flex-col">
       <header className="flex items-center justify-between px-4 py-2 border-b bg-primary text-primary-foreground">
         <span className="font-bold text-lg">Chat</span>
@@ -165,5 +178,6 @@ export default function ChatPage() {
 
       {showCreateGroup && <CreateGroupModal onClose={() => setShowCreateGroup(false)} />}
     </div>
+    </CallContext.Provider>
   );
 }

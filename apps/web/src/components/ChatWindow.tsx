@@ -12,9 +12,10 @@ import MediaMessage from "@/components/MediaMessage";
 import MessageTick from "@/components/MessageTick";
 import MessageContextMenu from "@/components/MessageContextMenu";
 import ForwardModal from "@/components/ForwardModal";
-import { Send, Paperclip, X, Users, Pin, Reply as ReplyIcon, Images } from "lucide-react";
+import { Send, Paperclip, X, Users, Pin, Reply as ReplyIcon, Images, Phone, Video } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Message, MessageType, MessageStatus, GroupMember } from "@chat/shared";
+import { useCallContext } from "@/context/call";
 
 async function fetchMessages(conversationId: string): Promise<Message[]> {
   const res = await fetch(`/api/conversations/${conversationId}/messages`, { credentials: "include" });
@@ -50,6 +51,7 @@ export default function ChatWindow() {
   } = useChatStore();
   const { online, typing, setTyping } = usePresenceStore();
   const { data: session } = useSession();
+  const { startCall } = useCallContext();
   const [input, setInput] = useState("");
   const [preview, setPreview] = useState<UploadPreview | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -320,6 +322,24 @@ export default function ChatWindow() {
             <p className="font-semibold text-sm leading-tight truncate">{displayName}</p>
             <p className="text-xs text-muted-foreground">{headerSubtext}</p>
           </div>
+          {activeConversationId && (
+            <>
+              <button
+                onClick={() => startCall(activeConversationId, "audio")}
+                className="p-1.5 rounded-full text-muted-foreground hover:text-foreground transition-colors"
+                title="Voice call"
+              >
+                <Phone className="h-4 w-4" />
+              </button>
+              <button
+                onClick={() => startCall(activeConversationId, "video")}
+                className="p-1.5 rounded-full text-muted-foreground hover:text-foreground transition-colors"
+                title="Video call"
+              >
+                <Video className="h-4 w-4" />
+              </button>
+            </>
+          )}
           <button
             onClick={() => { setShowMediaGallery((v) => !v); setShowGroupInfo(false); }}
             className={cn("p-1.5 rounded-full transition-colors", showMediaGallery ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground")}

@@ -6,6 +6,14 @@ import { redis } from "../lib/redis.js";
 
 const PRESENCE_KEY = (userId: string) => `presence:${userId}`;
 
+interface ActiveCall {
+  conversationId: string;
+  initiatorId: string;
+  type: string;
+  participants: Map<string, { userId: string; userName: string }>;
+}
+const activeCalls = new Map<string, ActiveCall>();
+
 export function setupSocket(io: Server) {
   io.use(async (socket, next) => {
     const token = socket.handshake.auth.token as string | undefined;
@@ -138,7 +146,104 @@ export function setupSocket(io: Server) {
       }
     });
 
+    // ── Call signaling ────────────────────────────────────────────
+    socket.on("call:invite", async ({ conversationId, type }: { conversationId: string; type: string }, ack: Function) => {
+      const [user] = await db.select({ name: users.name }).from(users).where(eq(users.id, userId)).limit(1);
+      const callerName = user?.name ?? "Unknown";
+      const callId = crypto.randomUUID();
+
+      activeCalls.set(callId, {
+        conversationId,
+        initiatorId: userId,
+        type,
+        participants: new Map([[userId, { userId, userName: callerName }]]),
+      });
+
+      socket.to(`conversation:${conversationId}`).emit("call:invite", {
+        callId, conversationId, callerId: userId, callerName, type: type as "audio" | "video",
+      });
+
+      // Auto-cleanup if no one joins within 60 s
+      setTimeout(() => {
+        const call = activeCalls.get(callId);
+        if (call && call.participants.size <= 1) {
+          activeCalls.delete(callId);
+          io.to(`conversation:${conversationId}`).emit("call:ended", { callId });
+        }
+      }, 60_000);
+
+      ack({ callId });
+    });
+
+    socket.on("call:join", async ({ callId }: { callId: string }, ack: Function) => {
+      const call = activeCalls.get(callId);
+      if (!call) return ack({ participants: [] });
+
+      const [user] = await db.select({ name: users.name }).from(users).where(eq(users.id, userId)).limit(1);
+      const userName = user?.name ?? "Unknown";
+      const existing = [...call.participants.values()];
+
+      call.participants.set(userId, { userId, userName });
+      socket.join(`call:${callId}`);
+
+      for (const p of existing) {
+        io.to(`user:${p.userId}`).emit("call:join", { callId, userId, userName });
+      }
+
+      ack({ participants: existing });
+    });
+
+    socket.on("call:leave", ({ callId }: { callId: string }) => {
+      const call = activeCalls.get(callId);
+      if (!call) return;
+
+      call.participants.delete(userId);
+      socket.leave(`call:${callId}`);
+
+      for (const p of call.participants.values()) {
+        io.to(`user:${p.userId}`).emit("call:leave", { callId, userId });
+      }
+
+      if (call.participants.size === 0) {
+        activeCalls.delete(callId);
+        io.to(`conversation:${call.conversationId}`).emit("call:ended", { callId });
+      }
+    });
+
+    socket.on("call:offer", ({ callId, to, sdp }: { callId: string; to: string; sdp: any }) => {
+      io.to(`user:${to}`).emit("call:offer", { callId, from: userId, sdp });
+    });
+
+    socket.on("call:answer", ({ callId, to, sdp }: { callId: string; to: string; sdp: any }) => {
+      io.to(`user:${to}`).emit("call:answer", { callId, from: userId, sdp });
+    });
+
+    socket.on("call:ice", ({ callId, to, candidate }: { callId: string; to: string; candidate: any }) => {
+      io.to(`user:${to}`).emit("call:ice", { callId, from: userId, candidate });
+    });
+
+    socket.on("call:reject", ({ callId }: { callId: string }) => {
+      const call = activeCalls.get(callId);
+      if (!call) return;
+      io.to(`user:${call.initiatorId}`).emit("call:rejected", { callId, userId });
+    });
+    // ── End call signaling ────────────────────────────────────────
+
     socket.on("disconnect", async () => {
+      // Leave any active calls
+      for (const [callId, call] of activeCalls.entries()) {
+        if (call.participants.has(userId)) {
+          call.participants.delete(userId);
+          for (const p of call.participants.values()) {
+            io.to(`user:${p.userId}`).emit("call:leave", { callId, userId });
+          }
+          if (call.participants.size === 0) {
+            activeCalls.delete(callId);
+            io.to(`conversation:${call.conversationId}`).emit("call:ended", { callId });
+          }
+        }
+      }
+
       await redis.del(PRESENCE_KEY(userId));
 
       const lastSeen = new Date();
