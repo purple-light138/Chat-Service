@@ -1,7 +1,7 @@
 import { Server } from "socket.io";
 import { eq, and, ne, inArray } from "drizzle-orm";
 import { db } from "../db/index.js";
-import { messages, conversations, users, sessions } from "../db/schema.js";
+import { messages, conversations, groups, groupMembers, users, sessions } from "../db/schema.js";
 import { redis } from "../lib/redis.js";
 
 const PRESENCE_KEY = (userId: string) => `presence:${userId}`;
@@ -159,16 +159,37 @@ export function setupSocket(io: Server) {
         participants: new Map([[userId, { userId, userName: callerName }]]),
       });
 
-      socket.to(`conversation:${conversationId}`).emit("call:invite", {
-        callId, conversationId, callerId: userId, callerName, type: type as "audio" | "video",
-      });
+      // Resolve recipients from DB so the invite reaches users regardless of which room they have open
+      const [conv] = await db
+        .select({ type: conversations.type, participantA: conversations.participantA, participantB: conversations.participantB })
+        .from(conversations).where(eq(conversations.id, conversationId)).limit(1);
+
+      let recipientIds: string[] = [];
+      if (conv) {
+        if (conv.type === "direct") {
+          const other = conv.participantA === userId ? conv.participantB : conv.participantA;
+          if (other) recipientIds = [other];
+        } else {
+          const [grp] = await db.select({ id: groups.id }).from(groups).where(eq(groups.conversationId, conversationId)).limit(1);
+          if (grp) {
+            const members = await db.select({ userId: groupMembers.userId })
+              .from(groupMembers).where(eq(groupMembers.groupId, grp.id));
+            recipientIds = members.map((m) => m.userId).filter((id) => id !== userId);
+          }
+        }
+      }
+
+      const payload = { callId, conversationId, callerId: userId, callerName, type: type as "audio" | "video" };
+      for (const id of recipientIds) {
+        io.to(`user:${id}`).emit("call:invite", payload);
+      }
 
       // Auto-cleanup if no one joins within 60 s
       setTimeout(() => {
         const call = activeCalls.get(callId);
         if (call && call.participants.size <= 1) {
           activeCalls.delete(callId);
-          io.to(`conversation:${conversationId}`).emit("call:ended", { callId });
+          for (const id of recipientIds) io.to(`user:${id}`).emit("call:ended", { callId });
         }
       }, 60_000);
 

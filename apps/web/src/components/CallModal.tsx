@@ -1,8 +1,9 @@
 import { useEffect, useRef } from "react";
-import { Mic, MicOff, Video, VideoOff, Monitor, PhoneOff, Phone } from "lucide-react";
+import { Mic, MicOff, Video, VideoOff, Monitor, PhoneOff } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useCallStore } from "@/store/call";
 import { useSession } from "@/lib/auth-client";
+import type { RemoteParticipant } from "@/store/call";
 
 interface Props {
   onEnd: () => void;
@@ -11,9 +12,17 @@ interface Props {
   onToggleScreenShare: () => Promise<void>;
 }
 
+// Plays audio from a remote stream (used for audio-only calls and as fallback)
+function AudioPlayer({ stream }: { stream: MediaStream | null }) {
+  const ref = useRef<HTMLAudioElement>(null);
+  useEffect(() => {
+    if (ref.current) ref.current.srcObject = stream;
+  }, [stream]);
+  return <audio ref={ref} autoPlay playsInline />;
+}
+
 function VideoTile({ stream, name, muted, small }: { stream: MediaStream | null; name: string; muted?: boolean; small?: boolean }) {
   const ref = useRef<HTMLVideoElement>(null);
-
   useEffect(() => {
     if (ref.current) ref.current.srcObject = stream;
   }, [stream]);
@@ -42,11 +51,28 @@ function ControlBtn({ onClick, active, danger, icon: Icon, title }: { onClick: (
       title={title}
       className={cn(
         "w-12 h-12 rounded-full flex items-center justify-center transition-colors",
-        danger ? "bg-red-500 hover:bg-red-600 text-white" : active ? "bg-white text-gray-900 hover:bg-gray-200" : "bg-gray-700 hover:bg-gray-600 text-white"
+        danger ? "bg-red-500 hover:bg-red-600 text-white"
+          : active ? "bg-white text-gray-900 hover:bg-gray-200"
+          : "bg-gray-700 hover:bg-gray-600 text-white"
       )}
     >
       <Icon className="h-5 w-5" />
     </button>
+  );
+}
+
+function AudioAvatar({ participant }: { participant: RemoteParticipant }) {
+  return (
+    <>
+      {/* Hidden audio element so the remote voice actually plays */}
+      <AudioPlayer stream={participant.stream} />
+      <div className="flex flex-col items-center gap-2">
+        <div className="w-20 h-20 rounded-full bg-gray-600 flex items-center justify-center text-3xl font-bold text-white">
+          {participant.userName[0]?.toUpperCase()}
+        </div>
+        <span className="text-white text-sm">{participant.userName}</span>
+      </div>
+    </>
   );
 }
 
@@ -62,52 +88,47 @@ export default function CallModal({ onEnd, onToggleMute, onToggleCamera, onToggl
 
   return (
     <div className="fixed inset-0 z-50 bg-gray-900 flex flex-col select-none">
-      {/* Status bar */}
+      {/* Status */}
       <div className="shrink-0 px-6 pt-6 pb-2 text-center">
-        {isOutgoing ? (
+        {isOutgoing && store.participants.length === 0 ? (
           <p className="text-gray-400 text-sm animate-pulse">Calling…</p>
         ) : (
           <p className="text-green-400 text-sm">Connected</p>
         )}
       </div>
 
-      {/* Video grid */}
+      {/* Main area */}
       <div className="flex-1 relative flex flex-col gap-2 p-4 overflow-hidden">
         {isAudio ? (
-          // Audio call: show avatars in a grid
-          <div className="flex-1 flex flex-wrap gap-4 items-center justify-center">
-            {/* Self */}
+          // Audio call: avatars + hidden audio players
+          <div className="flex-1 flex flex-wrap gap-6 items-center justify-center">
             <div className="flex flex-col items-center gap-2">
-              <div className="w-20 h-20 rounded-full bg-primary/30 flex items-center justify-center text-3xl font-bold text-white">
+              <div className={cn("w-20 h-20 rounded-full bg-primary/30 flex items-center justify-center text-3xl font-bold text-white", store.isMuted && "opacity-50")}>
                 {myName[0]?.toUpperCase()}
               </div>
               <span className="text-white text-sm">{myName} (you)</span>
             </div>
             {store.participants.map((p) => (
-              <div key={p.userId} className="flex flex-col items-center gap-2">
-                <div className="w-20 h-20 rounded-full bg-gray-600 flex items-center justify-center text-3xl font-bold text-white">
-                  {p.userName[0]?.toUpperCase()}
-                </div>
-                <span className="text-white text-sm">{p.userName}</span>
-              </div>
+              <AudioAvatar key={p.userId} participant={p} />
             ))}
           </div>
         ) : store.participants.length === 0 ? (
-          // Video call waiting
-          <div className="flex-1 flex items-center justify-center">
-            <div className="flex flex-col items-center gap-3">
-              <div className="w-24 h-24 rounded-full bg-gray-700 flex items-center justify-center text-4xl font-bold text-white">
-                {isOutgoing ? "?" : myName[0]?.toUpperCase()}
+          // Video: waiting for other party
+          <>
+            <div className="flex-1 flex items-center justify-center">
+              <div className="flex flex-col items-center gap-3">
+                <div className="w-24 h-24 rounded-full bg-gray-700 flex items-center justify-center text-4xl font-bold text-white">
+                  {myName[0]?.toUpperCase()}
+                </div>
+                <p className="text-gray-300 text-lg">{isOutgoing ? "Waiting for answer…" : "Connecting…"}</p>
               </div>
-              <p className="text-gray-300 text-lg">{isOutgoing ? "Waiting for answer…" : "Connecting…"}</p>
             </div>
-            {/* Local preview small */}
             <div className="absolute bottom-4 right-4">
               <VideoTile stream={store.localStream} name="You" muted small />
             </div>
-          </div>
+          </>
         ) : store.participants.length === 1 ? (
-          // 1-to-1 video call
+          // 1-to-1 video
           <>
             <VideoTile stream={store.participants[0].stream} name={store.participants[0].userName} />
             <div className="absolute bottom-4 right-4">
@@ -115,7 +136,7 @@ export default function CallModal({ onEnd, onToggleMute, onToggleCamera, onToggl
             </div>
           </>
         ) : (
-          // Group video call - grid layout
+          // Group video grid
           <div className={cn("flex-1 grid gap-2", store.participants.length <= 2 ? "grid-cols-2" : "grid-cols-2 grid-rows-2")}>
             <VideoTile stream={store.localStream} name={`${myName} (you)`} muted />
             {store.participants.map((p) => (
