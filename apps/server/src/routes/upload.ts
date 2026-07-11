@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { requireAuth } from "../middleware/auth.js";
-import { uploadToR2, getMimeCategory, MAX_FILE_SIZE } from "../lib/r2.js";
+import { uploadFile, getMimeCategory, MAX_FILE_SIZE } from "../lib/storage.js";
 import type { MessageType } from "@chat/shared";
 
 export async function uploadRoutes(app: FastifyInstance) {
@@ -31,7 +31,7 @@ export async function uploadRoutes(app: FastifyInstance) {
     const ext = data.filename.split(".").pop() ?? "bin";
     const key = `${req.userId}/${crypto.randomUUID()}.${ext}`;
 
-    const url = await uploadToR2(buffer, key, data.mimetype);
+    const url = await uploadFile(buffer, key, data.mimetype);
 
     return reply.send({
       url,

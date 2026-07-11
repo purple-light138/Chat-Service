@@ -1,6 +1,7 @@
 import "dotenv/config";
 import { createServer } from "http";
 import path from "path";
+import { fileURLToPath } from "url";
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import cookie from "@fastify/cookie";
@@ -63,9 +64,14 @@ await app.register(groupRoutes, { prefix: "/api", io });
 await app.register(messageRoutes, { prefix: "/api", io });
 await app.register(uploadRoutes, { prefix: "/api" });
 
+// Serve local uploads directory (used when R2 is not configured)
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const uploadsDir = path.join(__dirname, "../../../uploads");
+await app.register(fastifyStatic, { root: uploadsDir, prefix: "/uploads/", decorateReply: false });
+
 if (isProduction) {
   const webDist = path.join(process.cwd(), "apps/web/dist");
-  await app.register(fastifyStatic, { root: webDist, prefix: "/", wildcard: false });
+  await app.register(fastifyStatic, { root: webDist, prefix: "/", wildcard: false, decorateReply: false });
   app.setNotFoundHandler((_req, reply) => {
     reply.sendFile("index.html");
   });
