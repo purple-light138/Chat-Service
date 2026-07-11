@@ -83,7 +83,7 @@ export const groupMembers = pgTable("group_members", {
   joinedAt: timestamp("joined_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
-export const messageTypeEnum = pgEnum("message_type", ["text", "emoji", "image", "pdf", "video", "audio"]);
+export const messageTypeEnum = pgEnum("message_type", ["text", "emoji", "image", "pdf", "video", "audio", "file"]);
 export const messageStatusEnum = pgEnum("message_status", ["sent", "delivered", "read"]);
 
 export const messages = pgTable("messages", {

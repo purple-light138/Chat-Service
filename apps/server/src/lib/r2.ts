@@ -25,6 +25,9 @@ const ALLOWED_TYPES: Record<string, string> = {
   "audio/ogg": "audio",
   "audio/wav": "audio",
   "audio/webm": "audio",
+  "application/zip": "file",
+  "application/x-zip-compressed": "file",
+  "application/octet-stream": "file",
 };
 
 export const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB

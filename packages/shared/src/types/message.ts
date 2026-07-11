@@ -1,4 +1,4 @@
-export type MessageType = "text" | "emoji" | "image" | "pdf" | "video" | "audio";
+export type MessageType = "text" | "emoji" | "image" | "pdf" | "video" | "audio" | "file";
 export type MessageStatus = "sending" | "sent" | "delivered" | "read" | "failed";
 
 export interface ReplyPreview {

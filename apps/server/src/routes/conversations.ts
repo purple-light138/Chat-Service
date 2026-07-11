@@ -164,6 +164,31 @@ export async function conversationRoutes(app: FastifyInstance) {
       }))
     );
   });
+
+  // Media gallery — all non-text messages in a conversation
+  app.get("/conversations/:id/media", { preHandler: [requireAuth] }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+
+    const [conv] = await db.select().from(conversations).where(eq(conversations.id, id)).limit(1);
+    if (!conv) return reply.status(404).send({ error: "Not found" });
+
+    if (conv.type === "direct") {
+      if (conv.participantA !== req.userId && conv.participantB !== req.userId)
+        return reply.status(403).send({ error: "Access denied" });
+    } else {
+      const [group] = await db.select().from(groups).where(eq(groups.conversationId, id)).limit(1);
+      if (!group) return reply.status(404).send({ error: "Not found" });
+      const [membership] = await db.select().from(groupMembers)
+        .where(and(eq(groupMembers.groupId, group.id), eq(groupMembers.userId, req.userId))).limit(1);
+      if (!membership) return reply.status(403).send({ error: "Access denied" });
+    }
+
+    const rows = await db.select().from(messages)
+      .where(and(eq(messages.conversationId, id), inArray(messages.type, ["image", "video", "audio", "pdf", "file"]), eq(messages.isDeleted, false)))
+      .orderBy(desc(messages.createdAt));
+
+    return reply.send(rows.map(serializeMessage));
+  });
 }
 
 function serializeMessage(m: Record<string, unknown>) {

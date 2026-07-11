@@ -7,11 +7,12 @@ import { useSession } from "@/lib/auth-client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import GroupInfoPanel from "@/components/GroupInfoPanel";
+import MediaGallery from "@/components/MediaGallery";
 import MediaMessage from "@/components/MediaMessage";
 import MessageTick from "@/components/MessageTick";
 import MessageContextMenu from "@/components/MessageContextMenu";
 import ForwardModal from "@/components/ForwardModal";
-import { Send, Paperclip, X, Users, Pin, Reply as ReplyIcon } from "lucide-react";
+import { Send, Paperclip, X, Users, Pin, Reply as ReplyIcon, Images } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Message, MessageType, MessageStatus, GroupMember } from "@chat/shared";
 
@@ -30,13 +31,14 @@ async function fetchPinned(conversationId: string): Promise<Message | null> {
 interface UploadPreview { file: File; objectUrl: string; type: MessageType; }
 interface ContextMenuState { message: Message; x: number; y: number; }
 
-const ACCEPTED = "image/*,video/mp4,video/webm,application/pdf,audio/mpeg,audio/ogg,audio/wav,audio/webm";
+const ACCEPTED = "image/*,video/mp4,video/webm,application/pdf,audio/mpeg,audio/ogg,audio/wav,audio/webm,application/zip,application/x-zip-compressed";
 
 function detectType(file: File): MessageType | null {
   if (file.type.startsWith("image/")) return "image";
   if (file.type.startsWith("video/")) return "video";
   if (file.type.startsWith("audio/")) return "audio";
   if (file.type === "application/pdf") return "pdf";
+  if (file.type === "application/zip" || file.type === "application/x-zip-compressed") return "file";
   return null;
 }
 
@@ -52,6 +54,7 @@ export default function ChatWindow() {
   const [preview, setPreview] = useState<UploadPreview | null>(null);
   const [uploading, setUploading] = useState(false);
   const [showGroupInfo, setShowGroupInfo] = useState(false);
+  const [showMediaGallery, setShowMediaGallery] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [replyTo, setReplyTo] = useState<Message | null>(null);
   const [editingMsg, setEditingMsg] = useState<Message | null>(null);
@@ -317,8 +320,15 @@ export default function ChatWindow() {
             <p className="font-semibold text-sm leading-tight truncate">{displayName}</p>
             <p className="text-xs text-muted-foreground">{headerSubtext}</p>
           </div>
+          <button
+            onClick={() => { setShowMediaGallery((v) => !v); setShowGroupInfo(false); }}
+            className={cn("p-1.5 rounded-full transition-colors", showMediaGallery ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground")}
+            title="Media gallery"
+          >
+            <Images className="h-4 w-4" />
+          </button>
           {isGroup && (
-            <button onClick={() => setShowGroupInfo((v) => !v)} className={cn("p-1.5 rounded-full transition-colors", showGroupInfo ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground")}>
+            <button onClick={() => { setShowGroupInfo((v) => !v); setShowMediaGallery(false); }} className={cn("p-1.5 rounded-full transition-colors", showGroupInfo ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground")}>
               <Users className="h-4 w-4" />
             </button>
           )}
@@ -431,6 +441,11 @@ export default function ChatWindow() {
           </Button>
         </form>
       </div>
+
+      {/* Media gallery panel */}
+      {showMediaGallery && (
+        <MediaGallery conversationId={activeConversationId} onClose={() => setShowMediaGallery(false)} />
+      )}
 
       {/* Group info panel */}
       {isGroup && showGroupInfo && conversation?.group && (
