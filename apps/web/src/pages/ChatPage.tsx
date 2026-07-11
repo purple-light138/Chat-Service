@@ -4,9 +4,10 @@ import { useSession, signOut } from "@/lib/auth-client";
 import { socket } from "@/lib/socket";
 import ConversationList from "@/components/ConversationList";
 import ChatWindow from "@/components/ChatWindow";
+import CreateGroupModal from "@/components/CreateGroupModal";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { LogOut, Search, X } from "lucide-react";
+import { LogOut, Search, X, Users } from "lucide-react";
 import type { PublicUser } from "@chat/shared";
 import { useChatStore } from "@/store/chat";
 import { usePresenceStore } from "@/store/presence";
@@ -19,11 +20,10 @@ export default function ChatPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<PublicUser[]>([]);
   const [searching, setSearching] = useState(false);
+  const [showCreateGroup, setShowCreateGroup] = useState(false);
 
   useEffect(() => {
-    if (!isPending && !session) {
-      navigate("/login");
-    }
+    if (!isPending && !session) navigate("/login");
   }, [session, isPending, navigate]);
 
   useEffect(() => {
@@ -41,10 +41,14 @@ export default function ChatPage() {
     };
   }, [session, setOnline, setOffline]);
 
-  // Bootstrap presence for all known contacts after conversations load
+  // Bootstrap presence only for direct conversation participants
   useEffect(() => {
     if (conversations.length === 0) return;
-    const ids = conversations.map((c) => c.participant.id).join(",");
+    const ids = conversations
+      .filter((c) => c.type === "direct" && c.participant)
+      .map((c) => c.participant!.id)
+      .join(",");
+    if (!ids) return;
     fetch(`/api/users/presence?userIds=${ids}`, { credentials: "include" })
       .then((r) => r.json())
       .then((data: Record<string, boolean>) => initPresence(data))
@@ -53,10 +57,7 @@ export default function ChatPage() {
 
   async function handleSearch(q: string) {
     setSearchQuery(q);
-    if (q.trim().length < 2) {
-      setSearchResults([]);
-      return;
-    }
+    if (q.trim().length < 2) { setSearchResults([]); return; }
     setSearching(true);
     const res = await fetch(`/api/users/search?q=${encodeURIComponent(q)}`, { credentials: "include" });
     const data = await res.json();
@@ -105,22 +106,33 @@ export default function ChatPage() {
       <div className="flex flex-1 overflow-hidden">
         <aside className="w-80 border-r flex flex-col">
           <div className="p-2 border-b relative">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                className="pl-9 pr-8"
-                placeholder="Search users..."
-                value={searchQuery}
-                onChange={(e) => handleSearch(e.target.value)}
-              />
-              {searchQuery && (
-                <button
-                  onClick={() => { setSearchQuery(""); setSearchResults([]); }}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              )}
+            <div className="flex gap-2 mb-2">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  className="pl-9 pr-8"
+                  placeholder="Search users..."
+                  value={searchQuery}
+                  onChange={(e) => handleSearch(e.target.value)}
+                />
+                {searchQuery && (
+                  <button
+                    onClick={() => { setSearchQuery(""); setSearchResults([]); }}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
+              <Button
+                variant="outline"
+                size="icon"
+                className="shrink-0"
+                title="New group"
+                onClick={() => setShowCreateGroup(true)}
+              >
+                <Users className="h-4 w-4" />
+              </Button>
             </div>
 
             {searchResults.length > 0 && (
@@ -150,6 +162,8 @@ export default function ChatPage() {
           <ChatWindow />
         </main>
       </div>
+
+      {showCreateGroup && <CreateGroupModal onClose={() => setShowCreateGroup(false)} />}
     </div>
   );
 }

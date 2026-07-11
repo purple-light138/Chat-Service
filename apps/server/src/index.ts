@@ -11,6 +11,7 @@ import { toNodeHandler } from "better-auth/node";
 import { auth } from "./lib/auth.js";
 import { userRoutes } from "./routes/users.js";
 import { conversationRoutes } from "./routes/conversations.js";
+import { groupRoutes } from "./routes/groups.js";
 import { uploadRoutes } from "./routes/upload.js";
 import { setupSocket } from "./socket/index.js";
 import { runMigrations } from "./db/migrate.js";
@@ -19,30 +20,9 @@ const isProduction = process.env.NODE_ENV === "production";
 const CLIENT = process.env.CLIENT_URL ?? "http://localhost:5173";
 const port = parseInt(process.env.PORT ?? "3001");
 
-// Run migrations before starting
 await runMigrations();
 
 const app = Fastify({ logger: true });
-
-await app.register(cors, { origin: CLIENT, credentials: true });
-await app.register(cookie);
-await app.register(multipart, { limits: { fileSize: 50 * 1024 * 1024 } });
-
-await app.register(userRoutes, { prefix: "/api" });
-await app.register(conversationRoutes, { prefix: "/api" });
-await app.register(uploadRoutes, { prefix: "/api" });
-
-// In production, serve the built Vite frontend and provide an SPA fallback
-if (isProduction) {
-  const webDist = path.join(process.cwd(), "apps/web/dist");
-  await app.register(fastifyStatic, { root: webDist, prefix: "/", wildcard: false });
-  app.setNotFoundHandler((_req, reply) => {
-    reply.sendFile("index.html");
-  });
-}
-
-await app.ready();
-
 const authHandler = toNodeHandler(auth);
 
 function setCorsHeaders(res: import("http").ServerResponse, origin: string | undefined) {
@@ -54,6 +34,7 @@ function setCorsHeaders(res: import("http").ServerResponse, origin: string | und
   res.setHeader("Access-Control-Allow-Headers", "Content-Type,Authorization,Cookie");
 }
 
+// Create HTTP server and io early so we can pass io to routes
 const httpServer = createServer((req, res) => {
   if (req.url?.startsWith("/api/auth")) {
     setCorsHeaders(res, req.headers.origin);
@@ -70,6 +51,25 @@ const httpServer = createServer((req, res) => {
 const io = new Server(httpServer, {
   cors: { origin: CLIENT, credentials: true },
 });
+
+await app.register(cors, { origin: CLIENT, credentials: true });
+await app.register(cookie);
+await app.register(multipart, { limits: { fileSize: 50 * 1024 * 1024 } });
+
+await app.register(userRoutes, { prefix: "/api" });
+await app.register(conversationRoutes, { prefix: "/api" });
+await app.register(groupRoutes, { prefix: "/api", io });
+await app.register(uploadRoutes, { prefix: "/api" });
+
+if (isProduction) {
+  const webDist = path.join(process.cwd(), "apps/web/dist");
+  await app.register(fastifyStatic, { root: webDist, prefix: "/", wildcard: false });
+  app.setNotFoundHandler((_req, reply) => {
+    reply.sendFile("index.html");
+  });
+}
+
+await app.ready();
 
 setupSocket(io as any);
 

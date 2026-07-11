@@ -1,4 +1,5 @@
 import type { Message, SendMessagePayload } from "./message";
+import type { GroupMember } from "./conversation";
 
 export interface ServerToClientEvents {
   "message:new": (message: Message) => void;
@@ -7,6 +8,10 @@ export interface ServerToClientEvents {
   "user:offline": (userId: string, lastSeen: string) => void;
   "typing:start": (data: { conversationId: string; userId: string }) => void;
   "typing:stop": (data: { conversationId: string; userId: string }) => void;
+  "group:memberAdded": (data: { conversationId: string; member: GroupMember }) => void;
+  "group:memberRemoved": (data: { conversationId: string; userId: string }) => void;
+  "group:updated": (data: { conversationId: string; name: string }) => void;
+  "group:deleted": (data: { conversationId: string }) => void;
 }
 
 export interface ClientToServerEvents {

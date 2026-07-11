@@ -52,11 +52,35 @@ export const contacts = pgTable("contacts", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+export const conversationTypeEnum = pgEnum("conversation_type", ["direct", "group"]);
+
 export const conversations = pgTable("conversations", {
   id: text("id").primaryKey(),
+  type: conversationTypeEnum("type").notNull().default("direct"),
   participantA: text("participant_a").notNull().references(() => users.id, { onDelete: "cascade" }),
-  participantB: text("participant_b").notNull().references(() => users.id, { onDelete: "cascade" }),
+  // null for group conversations
+  participantB: text("participant_b").references(() => users.id, { onDelete: "cascade" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const groupMemberRoleEnum = pgEnum("group_member_role", ["admin", "member"]);
+
+export const groups = pgTable("groups", {
+  id: text("id").primaryKey(),
+  conversationId: text("conversation_id").notNull().unique().references(() => conversations.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  iconUrl: text("icon_url"),
+  createdBy: text("created_by").notNull().references(() => users.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const groupMembers = pgTable("group_members", {
+  id: text("id").primaryKey(),
+  groupId: text("group_id").notNull().references(() => groups.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  role: groupMemberRoleEnum("role").notNull().default("member"),
+  joinedAt: timestamp("joined_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 export const messageTypeEnum = pgEnum("message_type", ["text", "emoji", "image", "pdf", "video", "audio"]);
